@@ -13,6 +13,11 @@ def load_month(csv_path, engine):
 
     # Step 3: read the CSV into a DataFrame
     df = pd.read_csv(csv_path)
+    # Step 3b: drop the non-provider totals row, identified by content, not position
+    is_total = df["Period"].str.strip().str.upper() == "TOTAL"
+    if is_total.sum() != 1:
+        raise ValueError(f"Expected exactly one TOTAL row in {csv_path}, found {is_total.sum()}")
+    df = df[~is_total].copy()
 
     # Step 4: derive the month from Period, keep the original, verify against the filename
     # 4a: the file should describe one month, so Period should hold a single value
@@ -27,10 +32,11 @@ def load_month(csv_path, engine):
     # 4c: store it as a new column, leaving Period untouched
     df["Report_Month"] = report_month       # every row gets "2025-05"
     # 4d: the file's own month must match what the filename claimed
-    if f"{report_month:%Y-%m}" != claimed_month:
+    if report_month != claimed_month:
         raise ValueError(
-            f"Filename claims {claimed_month} but Period says {report_month:%Y-%m}"
+            f"Filename claims {claimed_month} but Period says {report_month}"
         )
+
 
     # Step 5: write the rows into the now-empty staging table
     with engine.begin() as conn:

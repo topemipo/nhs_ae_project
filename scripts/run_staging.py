@@ -1,6 +1,11 @@
 from pathlib import Path
+import sys
+
 from sqlalchemy import text
 from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from nhs_ae.db import get_engine
 from nhs_ae.staging import load_month

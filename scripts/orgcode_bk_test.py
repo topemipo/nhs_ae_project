@@ -214,7 +214,7 @@ for i in range(1, len(file_names)):
         })
 
 # --- 4. EXPORT TO EXCEL ---
-output_file = "Org_Changes_Report.xlsx"
+output_file = "org_changes_report.xlsx"
 
 total_changes = len(recoded_rows) + len(renamed_rows) + len(added_rows) + len(removed_rows)
 
