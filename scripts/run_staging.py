@@ -1,10 +1,13 @@
 from pathlib import Path
 from sqlalchemy import text
+from dotenv import load_dotenv
 
 from nhs_ae.db import get_engine
 from nhs_ae.staging import load_month
 
+load_dotenv()
 RAW_DIR = Path("data/raw")
+
 
 
 def main():

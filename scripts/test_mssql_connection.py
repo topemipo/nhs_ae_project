@@ -1,6 +1,8 @@
 import os
 import pyodbc
+from dotenv import load_dotenv
 
+load_dotenv()
 SA_PASSWORD = os.environ["MSSQL_SA_PASSWORD"]
 
 # Note the 'TrustServerCertificate=yes' - essential for local Docker testing with modern drivers
