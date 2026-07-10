@@ -37,7 +37,6 @@ def load_month(csv_path, engine):
             f"Filename claims {claimed_month} but Period says {report_month}"
         )
 
-
     # Step 5: write the rows into the now-empty staging table
     with engine.begin() as conn:
         df.to_sql(
