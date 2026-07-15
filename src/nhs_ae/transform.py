@@ -64,30 +64,64 @@ def assert_provider_grain(engine):
     
 
 def load_dim_provider_scd2(engine, batch_month):
-    close_changed = text("""
-        UPDATE dim
-        SET
-            dim.Valid_To   = :batch_month,
-            dim.Is_Current = 0
-        FROM dbo.Dim_Provider AS dim
-        INNER JOIN dbo.vStaging_Provider AS stg
-            ON stg.Org_Code = dim.Org_Code
-        WHERE dim.Is_Current = 1
-          AND (
-                stg.Parent_Org IS DISTINCT FROM dim.Parent_Org
-             OR stg.Org_Name  IS DISTINCT FROM dim.Org_Name
-          );
-    """)
+    params = {"batch_month": batch_month}
 
     with engine.begin() as conn:
-        # Move 2a: close the old version of any provider whose attributes changed
-        result = conn.execute(close_changed, {"batch_month": batch_month})
-        print(f"  Closed {result.rowcount} changed version(s).")
+        # Move 1: build a temp table of the Org Codes whose attributes changed
+        conn.execute(text("""
+            DROP TABLE IF EXISTS #changed;
+            CREATE TABLE #changed (
+                Org_Code     NVARCHAR(50) PRIMARY KEY,
+                Provider_Key INT NOT NULL
+            );
 
-        # Move 2b: open a new version for those changed providers  (next)
+            INSERT INTO #changed (Org_Code, Provider_Key)
+            SELECT stg.Org_Code, dim.Provider_Key
+            FROM dbo.vStaging_Provider AS stg
+            INNER JOIN dbo.Dim_Provider AS dim
+                ON dim.Org_Code = stg.Org_Code
+            WHERE dim.Is_Current = 1
+              AND (
+                    stg.Parent_Org IS DISTINCT FROM dim.Parent_Org
+                 OR stg.Org_Name  IS DISTINCT FROM dim.Org_Name
+              );
+        """))
+        changed_count = conn.execute(text("SELECT COUNT(*) FROM #changed")).scalar()
+        print(f"  Move 1: {changed_count} changed provider(s) identified.")
 
-        # Move 2c: insert brand-new providers (no current version)
+        # Move 2: close the current version of those changed providers
+        result = conn.execute(text("""
+            UPDATE dim
+            SET dim.Valid_To   = :batch_month,
+                dim.Is_Current = 0
+            FROM dbo.Dim_Provider AS dim
+            INNER JOIN #changed AS c
+                ON c.Provider_Key = dim.Provider_Key;
+        """), params)
+        print(f"  Move 2: {result.rowcount} version(s) closed.")
 
-        # Move 3:  close providers absent for two consecutive months
-
-        # Move 4:  update Last_Seen_Month for providers present this month
+        # Move 3: open a new version for those same changed providers
+        # (uses Org_Code, not Provider_Key: that key is now closed)
+        result = conn.execute(text("""
+            INSERT INTO dbo.Dim_Provider
+                (Org_Code, Parent_Org, Org_Name,
+                 Valid_From, Valid_To, Is_Current,
+                 Reason_Status, Last_Seen_Month)
+            SELECT
+                stg.Org_Code,
+                stg.Parent_Org,
+                stg.Org_Name,
+                :batch_month,
+                '9999-12-31',
+                1,
+                'Attribute change',
+                :batch_month
+            FROM dbo.vStaging_Provider AS stg
+            INNER JOIN #changed AS c
+                ON c.Org_Code = stg.Org_Code;
+        """), params)
+        print(f"  Move 3: {result.rowcount} new version(s) opened.")
+        
+        # Move 4: insert brand-new providers (Org Code not in the dimension at all)
+        # Move 5: close providers absent for two consecutive months
+        # Move 6: update Last_Seen_Month for every provider present this month
