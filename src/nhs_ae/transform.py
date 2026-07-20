@@ -123,5 +123,82 @@ def load_dim_provider_scd2(engine, batch_month):
         print(f"  Move 3: {result.rowcount} new version(s) opened.")
         
         # Move 4: insert brand-new providers (Org Code not in the dimension at all)
-        # Move 5: close providers absent for two consecutive months
-        # Move 6: update Last_Seen_Month for every provider present this month
+        result = conn.execute(text("""
+            INSERT INTO dbo.Dim_Provider
+                (Org_Code, Parent_Org, Org_Name,
+                 Valid_From, Valid_To, Is_Current,
+                 Reason_Status, Last_Seen_Month)
+            SELECT
+                stg.Org_Code,
+                stg.Parent_Org,
+                stg.Org_Name,
+                :batch_month,
+                '9999-12-31',
+                1,
+                'New provider',
+                :batch_month
+            FROM dbo.vStaging_Provider AS stg
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM dbo.Dim_Provider AS dim
+                WHERE dim.Org_Code = stg.Org_Code
+            );
+        """), params)
+        print(f"  Move 4: {result.rowcount} new provider(s) inserted.")
+
+        # Move 5: handle reapperance 
+        result = conn.execute(text("""
+            INSERT INTO dbo.Dim_Provider
+                (Org_Code, Parent_Org, Org_Name,
+                 Valid_From, Valid_To, Is_Current,
+                 Reason_Status, Last_Seen_Month)
+            SELECT
+                stg.Org_Code,
+                stg.Parent_Org,
+                stg.Org_Name,
+                :batch_month,
+                '9999-12-31',
+                1,
+                'Reappeared',
+                :batch_month
+            FROM dbo.vStaging_Provider AS stg
+            WHERE NOT EXISTS (
+                    SELECT 1 FROM dbo.Dim_Provider AS dim
+                    WHERE dim.Org_Code = stg.Org_Code
+                      AND dim.Is_Current = 1
+                  )
+              AND EXISTS (
+                    SELECT 1 FROM dbo.Dim_Provider AS dim
+                    WHERE dim.Org_Code = stg.Org_Code
+                  );
+        """), params)
+        print(f"  Move 5: {result.rowcount} reappeared provider(s) reopened.")
+
+        # Move 6: close providers absent for two consecutive months
+        result = conn.execute(text("""
+            UPDATE dim
+            SET dim.Valid_To   = :batch_month,
+                dim.Is_Current = 0
+            FROM dbo.Dim_Provider AS dim
+            WHERE dim.Is_Current = 1
+              AND NOT EXISTS (
+                    SELECT 1
+                    FROM dbo.vStaging_Provider AS stg
+                    WHERE stg.Org_Code = dim.Org_Code
+              )
+              AND DATEDIFF(MONTH, dim.Last_Seen_Month, :batch_month) >= 2;
+        """), params)
+        print(f"  Move 6: {result.rowcount} absent version(s) closed.")
+
+        # Move 7: update Last_Seen_Month for every provider present this month
+        result = conn.execute(text("""
+            UPDATE dim
+            SET dim.Last_Seen_Month = :batch_month
+            FROM dbo.Dim_Provider AS dim
+            INNER JOIN dbo.vStaging_Provider AS stg
+                ON stg.Org_Code = dim.Org_Code
+            WHERE dim.Is_Current = 1
+            AND dim.Last_Seen_Month <> :batch_month;
+        """), params)
+        print(f"  Move 7: {result.rowcount} present provider(s) last-seen updated.")
+
