@@ -23,7 +23,7 @@ def main():
     if not files:
         raise FileNotFoundError(f"No CSV files found in {RAW_DIR}")
     # Step 3: for now, load only the first month, to prove the path works
-    csv_path = files[0]
+    csv_path = files[1]
     load_month(csv_path, engine)
     # Step 4: read the row count back, to confirm the rows really landed
     with engine.connect() as conn:

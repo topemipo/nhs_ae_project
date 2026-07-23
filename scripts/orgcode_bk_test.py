@@ -5,7 +5,7 @@ import re
 
 # --- 1. CONFIGURATION ---
 # Replace this with the path to the folder containing your 12 CSVs
-folder_path = r"data"
+folder_path = r"data/raw"
 
 
 def normalize_columns(df):
@@ -213,10 +213,57 @@ for i in range(1, len(file_names)):
             'parent name': row['parent name'],
         })
 
-# --- 4. EXPORT TO EXCEL ---
-output_file = "org_changes_report.xlsx"
+# --- 3d. Did any 'Removed' code reappear in a later month? ---
+# Reappearance = a code that was marked 'Removed' earlier shows up again in
+# any subsequent month.
+reappeared_rows = []
 
-total_changes = len(recoded_rows) + len(renamed_rows) + len(added_rows) + len(removed_rows)
+# Timeline: for each org code, the ordered list of month indices it appears in
+code_to_month_idx = {}
+for idx, fname in enumerate(file_names):
+    for code in monthly_data[fname]['org code']:
+        code_to_month_idx.setdefault(code, []).append(idx)
+
+for r in removed_rows:
+    code = r['org code']
+    gone_from_idx = file_names.index(r['Current_Month'])   # first month it was absent
+
+    # any month at/after the disappearance where the code shows up again
+    later_idxs = [i for i in code_to_month_idx.get(code, []) if i >= gone_from_idx]
+    if not later_idxs:
+        continue
+
+    reappeared_idx = later_idxs[0]
+    reappeared_file = file_names[reappeared_idx]
+
+    # Compare identity at removal vs at reappearance to flag possible code reuse
+    back_row = monthly_data[reappeared_file].set_index('org code').loc[code]
+    if isinstance(back_row, pd.DataFrame):
+        back_row = back_row.iloc[0]
+    same_identity = (
+        norm_text(r['org name']) == back_row['_name_key']
+        and norm_text(r['parent name']) == back_row['_parent_key']
+    )
+
+    reappeared_rows.append({
+        'Status': 'Removed then reappeared' if same_identity
+                  else 'Reappeared with different identity (possible code reuse)',
+        'org code': code,
+        'Removed_org_name': r['org name'],
+        'Removed_parent_name': r['parent name'],
+        'Reappeared_org_name': back_row['org name'],
+        'Reappeared_parent_name': back_row['parent name'],
+        'Last_seen_month': r['Previous_Month'],
+        'Went_missing_month': r['Current_Month'],
+        'Reappeared_in_month': reappeared_file,
+        'Months_missing': reappeared_idx - gone_from_idx,
+    })
+
+# --- 4. EXPORT TO EXCEL ---
+output_file = "data/generated/org_changes_report.xlsx"
+
+total_changes = (len(recoded_rows) + len(renamed_rows) + len(added_rows)
+                 + len(removed_rows) + len(reappeared_rows))
 
 if total_changes == 0:
     print("\nNo changes found! The org lists are identical across all months.")
@@ -228,8 +275,10 @@ else:
                 'Renamed or reparented (same code, org name and/or parent name changed)',
                 'Added (new code, no matching identity found)',
                 'Removed (code gone, no matching identity found)',
+                'Removed then reappeared (code came back in a later month)',
             ],
-            'Count': [len(recoded_rows), len(renamed_rows), len(added_rows), len(removed_rows)],
+            'Count': [len(recoded_rows), len(renamed_rows), len(added_rows),
+                      len(removed_rows), len(reappeared_rows)],
         })
         summary.to_excel(writer, sheet_name='Summary', index=False)
 
@@ -241,10 +290,13 @@ else:
             pd.DataFrame(added_rows).to_excel(writer, sheet_name='Added', index=False)
         if removed_rows:
             pd.DataFrame(removed_rows).to_excel(writer, sheet_name='Removed', index=False)
+        if reappeared_rows:
+            pd.DataFrame(reappeared_rows).to_excel(writer, sheet_name='Removed_then_Reappeared', index=False)
 
     print(f"\nSuccess! Found {total_changes} changes across the year.")
     print(f"  Recoded (same identity, new code):          {len(recoded_rows)}")
     print(f"  Renamed or reparented (same code):          {len(renamed_rows)}")
     print(f"  Genuinely added:                            {len(added_rows)}")
     print(f"  Genuinely removed:                          {len(removed_rows)}")
+    print(f"  Removed then reappeared:                    {len(reappeared_rows)}")
     print(f"\nReport saved as: {output_file} in your current directory.")
